@@ -3,6 +3,11 @@ import requests
 from datetime import datetime, timedelta
 import struct
 import time
+import urllib3
+import certifi
+
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def create_database_connection():
     # Konfigurasi Database
@@ -406,7 +411,12 @@ def get_antares_data(connection):
                     request_url = base_url.format(imei)
                     print(f"\nMengakses URL: {request_url}")
                     
-                    response = requests.get(request_url, headers=headers, verify=False)
+                    # Use certifi's certificates and set verify to True
+                    response = requests.get(
+                        request_url, 
+                        headers=headers, 
+                        verify=certifi.where()
+                    )
                     
                     if response.status_code == 200:
                         data = response.json()
