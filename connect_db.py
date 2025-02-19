@@ -1,18 +1,24 @@
 import pymysql
+from sshtunnel import SSHTunnelForwarder
 import requests
 from datetime import datetime, timedelta
 import struct
 import time
-import urllib3
-import certifi
 
-# Disable SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+def create_ssh_tunnel():
+    # Konfigurasi SSH
+    ssh_config = {
+        'ssh_host': '36.92.168.182',  # Host SSH server
+        'ssh_port': 22,                   # Port SSH (default: 22)
+        'ssh_username': 'nociot',       # Username SSH
+        'ssh_password': 'telkom!@#321',   # Password SSH
+        # Alternatif menggunakan private key:
+        # 'ssh_pkey': '/path/to/private/key',
+    }
 
-def create_database_connection():
     # Konfigurasi Database
     db_config = {
-        'db_host': '127.0.0.1',           # Database host local
+        'db_host': 'localhost',           # Database host (biasanya localhost karena melalui tunnel)
         'db_port': 3306,                  # Port database
         'db_name': 'lansitec_cat1',       # Nama database
         'db_user': 'admin',             # Username database
@@ -20,20 +26,31 @@ def create_database_connection():
     }
 
     try:
-        # Membuat koneksi database langsung
+        # Membuat SSH tunnel
+        tunnel = SSHTunnelForwarder(
+            (ssh_config['ssh_host'], ssh_config['ssh_port']),
+            ssh_username=ssh_config['ssh_username'],
+            ssh_password=ssh_config['ssh_password'],
+            remote_bind_address=('127.0.0.1', db_config['db_port'])
+        )
+        
+        # Memulai tunnel
+        tunnel.start()
+
+        # Membuat koneksi database melalui tunnel
         connection = pymysql.connect(
             host=db_config['db_host'],
-            port=db_config['db_port'],
+            port=tunnel.local_bind_port,
             user=db_config['db_user'],
             password=db_config['db_password'],
             database=db_config['db_name']
         )
 
-        return connection
+        return tunnel, connection
 
     except Exception as e:
         print(f"Error saat membuat koneksi: {str(e)}")
-        return None
+        return None, None
 
 def get_device_data(connection, filter_type=None, value=None):
     """
@@ -85,6 +102,16 @@ def format_antares_date(date_str):
     except Exception as e:
         print(f"Error memformat tanggal: {str(e)}")
         return date_str
+
+def calculate_rssi(hex_value):
+    """Calculate RSSI value from hex"""
+    try:
+        dec_value = int(hex_value, 16)
+        if dec_value > 127:  # Convert to signed value if needed
+            dec_value = dec_value - 256
+        return dec_value
+    except:
+        return None
 
 def decode_hex_message(hex_message):
     """
@@ -172,10 +199,43 @@ def decode_hex_message(hex_message):
             return result
             
         elif msg_type == '4':  # Beacon message
-            return {
+            # Define field lengths for Type 4
+            field_lengths = [2, 2, 4, 4, 2, 4, 4, 2, 4, 4, 2]
+            
+            # Split message into parts
+            current_pos = 0
+            for length in field_lengths:
+                if current_pos + length <= len(hex_message):
+                    parts.append(hex_message[current_pos:current_pos + length])
+                    current_pos += length
+            
+            # Process beacon data
+            beacons = []
+            if len(parts) >= 5:  # First beacon
+                beacons.append({
+                    'major': int(parts[2], 16),
+                    'minor': int(parts[3], 16),
+                    'rssi': calculate_rssi(parts[4])
+                })
+            
+            if len(parts) >= 8:  # Second beacon
+                beacons.append({
+                    'major': int(parts[5], 16),
+                    'minor': int(parts[6], 16),
+                    'rssi': calculate_rssi(parts[7])
+                })
+            
+            # Sort beacons by RSSI (strongest signal first)
+            beacons.sort(key=lambda x: x['rssi'] if x['rssi'] is not None else -999, reverse=True)
+            
+            result = {
                 'type': 'Beacon message',
+                'beacon_count': int(parts[1], 16) if len(parts) > 1 else 0,
+                'beacons': beacons,
+                'best_beacon': beacons[0] if beacons else None,
                 'raw_data': hex_message
             }
+            return result
             
         elif msg_type == '5':  # Alarm message
             # Define field lengths for Type 5
@@ -276,6 +336,20 @@ def save_to_registration(connection, parsed_data, imei, created_time):
                     print(f"• Voltage: {data['voltage']}V")
                     print(f"• Battery: {data['persentase_baterai']}%")
                     print(f"• Timestamp: {data['timestamp']}")
+                    
+                elif parsed_data['type'] == 'Beacon message':
+                    if parsed_data['best_beacon']:
+                        data.update({
+                            'Major': parsed_data['best_beacon']['major'],
+                            'Minor': parsed_data['best_beacon']['minor']
+                        })
+                        print("\nMenyimpan data Beacon ke tabel registration:")
+                        print(f"• IMEI: {imei}")
+                        print(f"• Type: {data['payload_id_2']}")
+                        print(f"• Major: {data['Major']}")
+                        print(f"• Minor: {data['Minor']}")
+                        print(f"• RSSI: {parsed_data['best_beacon']['rssi']} dBm")
+                        print(f"• Timestamp: {data['timestamp']}")
                     
                 elif parsed_data['type'] == 'Alarm message':
                     data.update({
@@ -411,12 +485,7 @@ def get_antares_data(connection):
                     request_url = base_url.format(imei)
                     print(f"\nMengakses URL: {request_url}")
                     
-                    # Use certifi's certificates and set verify to True
-                    response = requests.get(
-                        request_url, 
-                        headers=headers, 
-                        verify=certifi.where()
-                    )
+                    response = requests.get(request_url, headers=headers, verify=False)
                     
                     if response.status_code == 200:
                         data = response.json()
@@ -513,10 +582,10 @@ def main():
     
     while True:
         try:
-            # Membuat koneksi langsung ke database
-            connection = create_database_connection()
+            # Membuat koneksi
+            tunnel, connection = create_ssh_tunnel()
             
-            if connection:
+            if tunnel and connection:
                 try:
                     # Update struktur tabel
                     create_or_update_payload_table(connection)
@@ -536,11 +605,12 @@ def main():
                 finally:
                     # Menutup koneksi
                     connection.close()
+                    tunnel.close()
                     print("\nKoneksi ditutup")
             
             # Tunggu 10 detik sebelum mengecek data baru
             print(f"\nWaiting for 10 seconds before next check...")
-            time.sleep(10)
+            time.sleep(10)  # Mengubah menjadi 10 detik
             
         except KeyboardInterrupt:
             print("\nProgram dihentikan oleh user")
@@ -548,7 +618,7 @@ def main():
         except Exception as e:
             print(f"\nError dalam main loop: {str(e)}")
             print("Mencoba kembali dalam 10 detik...")
-            time.sleep(10)
+            time.sleep(10)  # Mengubah retry juga menjadi 10 detik
 
 if __name__ == "__main__":
     main()
