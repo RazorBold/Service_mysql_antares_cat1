@@ -1,56 +1,37 @@
 import pymysql
-from sshtunnel import SSHTunnelForwarder
 import requests
 from datetime import datetime, timedelta
 import struct
 import time
 
-def create_ssh_tunnel():
-    # Konfigurasi SSH
-    ssh_config = {
-        'ssh_host': '36.92.168.182',  # Host SSH server
-        'ssh_port': 22,                   # Port SSH (default: 22)
-        'ssh_username': 'nociot',       # Username SSH
-        'ssh_password': 'telkom!@#321',   # Password SSH
-        # Alternatif menggunakan private key:
-        # 'ssh_pkey': '/path/to/private/key',
-    }
-
+def create_database_connection():
+    """
+    Membuat koneksi langsung ke database lokal
+    """
     # Konfigurasi Database
     db_config = {
-        'db_host': 'localhost',           # Database host (biasanya localhost karena melalui tunnel)
-        'db_port': 3306,                  # Port database
-        'db_name': 'lansitec_cat1',       # Nama database
-        'db_user': 'admin',             # Username database
-        'db_password': 'Wow0w0!2025'      # Password database
+        'host': '127.0.0.1',           # Local database host
+        'port': 3306,                  # Default MySQL port
+        'db': 'lansitec_cat1',         # Nama database
+        'user': 'admin',               # Username database
+        'password': 'Wow0w0!2025'      # Password database
     }
 
     try:
-        # Membuat SSH tunnel
-        tunnel = SSHTunnelForwarder(
-            (ssh_config['ssh_host'], ssh_config['ssh_port']),
-            ssh_username=ssh_config['ssh_username'],
-            ssh_password=ssh_config['ssh_password'],
-            remote_bind_address=('127.0.0.1', db_config['db_port'])
-        )
-        
-        # Memulai tunnel
-        tunnel.start()
-
-        # Membuat koneksi database melalui tunnel
+        # Membuat koneksi database langsung
         connection = pymysql.connect(
-            host=db_config['db_host'],
-            port=tunnel.local_bind_port,
-            user=db_config['db_user'],
-            password=db_config['db_password'],
-            database=db_config['db_name']
+            host=db_config['host'],
+            port=db_config['port'],
+            user=db_config['user'],
+            password=db_config['password'],
+            database=db_config['db']
         )
 
-        return tunnel, connection
+        return connection
 
     except Exception as e:
         print(f"Error saat membuat koneksi: {str(e)}")
-        return None, None
+        return None
 
 def get_device_data(connection, filter_type=None, value=None):
     """
@@ -582,10 +563,10 @@ def main():
     
     while True:
         try:
-            # Membuat koneksi
-            tunnel, connection = create_ssh_tunnel()
+            # Membuat koneksi langsung ke database
+            connection = create_database_connection()
             
-            if tunnel and connection:
+            if connection:
                 try:
                     # Update struktur tabel
                     create_or_update_payload_table(connection)
@@ -605,12 +586,11 @@ def main():
                 finally:
                     # Menutup koneksi
                     connection.close()
-                    tunnel.close()
                     print("\nKoneksi ditutup")
             
             # Tunggu 10 detik sebelum mengecek data baru
             print(f"\nWaiting for 10 seconds before next check...")
-            time.sleep(10)  # Mengubah menjadi 10 detik
+            time.sleep(10)
             
         except KeyboardInterrupt:
             print("\nProgram dihentikan oleh user")
@@ -618,7 +598,7 @@ def main():
         except Exception as e:
             print(f"\nError dalam main loop: {str(e)}")
             print("Mencoba kembali dalam 10 detik...")
-            time.sleep(10)  # Mengubah retry juga menjadi 10 detik
+            time.sleep(10)
 
 if __name__ == "__main__":
     main()
