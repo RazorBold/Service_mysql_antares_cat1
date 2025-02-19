@@ -3,6 +3,12 @@ import requests
 from datetime import datetime, timedelta
 import struct
 import time
+import warnings
+import urllib3
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+
+# Disable SSL warning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 def create_database_connection():
     """
@@ -451,6 +457,10 @@ def get_antares_data(connection):
                 'Accept': 'application/json'
             }
             
+            # Add verify=False to the session instead of individual requests
+            session = requests.Session()
+            session.verify = False  # Only if you're sure about security implications
+            
             for device in results:
                 imei = device['imei']
                 
@@ -466,7 +476,8 @@ def get_antares_data(connection):
                     request_url = base_url.format(imei)
                     print(f"\nMengakses URL: {request_url}")
                     
-                    response = requests.get(request_url, headers=headers, verify=False)
+                    # Use session instead of requests directly
+                    response = session.get(request_url, headers=headers)
                     
                     if response.status_code == 200:
                         data = response.json()
