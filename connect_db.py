@@ -199,27 +199,33 @@ def decode_hex_message(hex_message):
             # Process beacon data
             beacons = []
             if len(parts) >= 5:  # First beacon
-                beacons.append({
-                    'major': int(parts[2], 16),
-                    'minor': int(parts[3], 16),
-                    'rssi': calculate_rssi(parts[4])
-                })
+                major = int(parts[2], 16)
+                minor = int(parts[3], 16)
+                if not (major == 0 and minor == 0):  # Only add if not both zero
+                    beacons.append({
+                        'major': major,
+                        'minor': minor,
+                        'rssi': calculate_rssi(parts[4])
+                    })
             
             if len(parts) >= 8:  # Second beacon
-                beacons.append({
-                    'major': int(parts[5], 16),
-                    'minor': int(parts[6], 16),
-                    'rssi': calculate_rssi(parts[7])
-                })
+                major = int(parts[5], 16)
+                minor = int(parts[6], 16)
+                if not (major == 0 and minor == 0):  # Only add if not both zero
+                    beacons.append({
+                        'major': major,
+                        'minor': minor,
+                        'rssi': calculate_rssi(parts[7])
+                    })
             
-            # Sort beacons by RSSI (strongest signal first)
-            beacons.sort(key=lambda x: x['rssi'] if x['rssi'] is not None else -999, reverse=True)
+            # Get the best beacon (no need to sort by RSSI as we're ignoring zeros)
+            best_beacon = beacons[0] if beacons else None
             
             result = {
                 'type': 'Beacon message',
-                'beacon_count': int(parts[1], 16) if len(parts) > 1 else 0,
+                'beacon_count': len(beacons),  # Update count to reflect valid beacons
                 'beacons': beacons,
-                'best_beacon': beacons[0] if beacons else None,
+                'best_beacon': best_beacon,
                 'raw_data': hex_message
             }
             return result
