@@ -109,10 +109,62 @@ def decode_hex_message(hex_message, firmware_type):
         print(f"Debug - Firmware type: {firmware_type}")
         
         if len(hex_message) >= 2:
+            # Get first character as message type
             msg_type = hex_message[0]
             print(f"Debug - Message type detected: {msg_type}")
             
-            if msg_type == '2':  # Heartbeat message
+            # Message type checks should be against single character
+            if msg_type == '3':  # GNSS Position message
+                print("Debug - Processing GNSS Position message")
+                # Define field lengths for Type 3
+                field_lengths = [2,  # Type Bit Field
+                               8,  # Longitude
+                               8,  # Latitude
+                               8,  # UTC Time
+                               4,  # Reserved
+                               4,  # Reserved
+                               2]  # Reserved
+                
+                # Split message into parts
+                current_pos = 0
+                parts = []
+                for length in field_lengths:
+                    if current_pos + length <= len(hex_message):
+                        part = hex_message[current_pos:current_pos + length]
+                        parts.append(part)
+                        print(f"Debug - Part {len(parts)}: {part} (length: {length})")
+                        current_pos += length
+                
+                try:
+                    # Decode IEEE 754 coordinates
+                    lat_bytes = bytes.fromhex(parts[2])
+                    lon_bytes = bytes.fromhex(parts[1])
+                    latitude = struct.unpack('!f', lat_bytes)[0] if len(parts) > 2 else None
+                    longitude = struct.unpack('!f', lon_bytes)[0] if len(parts) > 1 else None
+                    
+                    # Convert UTC timestamp
+                    timestamp = int(parts[3], 16) if len(parts) > 3 else None
+                    utc_time = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S UTC') if timestamp else None
+                    
+                    print(f"Debug - GNSS parsing:")
+                    print(f"Debug - Latitude hex: {parts[2]} -> {latitude}")
+                    print(f"Debug - Longitude hex: {parts[1]} -> {longitude}")
+                    print(f"Debug - Timestamp hex: {parts[3]} -> {utc_time}")
+                    
+                    result = {
+                        'type': 'GNSS Position message',
+                        'latitude': latitude,
+                        'longitude': longitude,
+                        'utc_time': utc_time,
+                        'raw_data': hex_message
+                    }
+                    return result
+                except Exception as e:
+                    print(f"Error decoding GNSS data: {str(e)}")
+                    print(f"Debug - Available parts: {parts}")
+                    raise
+
+            elif msg_type == '2':  # Heartbeat message
                 print("Debug - Processing Heartbeat message")
                 print(f"Debug - Message length: {len(hex_message)}")
                 print(f"Debug - Using firmware type: {firmware_type}")
@@ -193,106 +245,70 @@ def decode_hex_message(hex_message, firmware_type):
                     raise
 
             elif msg_type == '1':  # Registration message
+                print("Debug - Processing Registration message")
                 return {
                     'type': 'Registration message',
                     'raw_data': hex_message
                 }
             
-            elif msg_type == '3':  # GNSS Position message
-                # Define field lengths for Type 3
-                field_lengths = [2,  # Type Bit Field
-                               8,  # Longitude
-                               8,  # Latitude
-                               8,  # UTC Time
-                               4,  # Reserved
-                               4,  # Reserved
-                               2]  # Reserved
-                
-                # Split message into parts
-                current_pos = 0
-                for length in field_lengths:
-                    if current_pos + length <= len(hex_message):
-                        parts.append(hex_message[current_pos:current_pos + length])
-                        current_pos += length
-                
-                # Decode IEEE 754 coordinates
-                try:
-                    latitude = struct.unpack('!f', bytes.fromhex(parts[2]))[0] if len(parts) > 2 else None
-                    longitude = struct.unpack('!f', bytes.fromhex(parts[1]))[0] if len(parts) > 1 else None
-                    timestamp = int(parts[3], 16) if len(parts) > 3 else None
-                    utc_time = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S UTC') if timestamp else None
-                except Exception as e:
-                    print(f"Error decoding coordinates: {str(e)}")
-                    latitude = longitude = utc_time = None
-                
-                result = {
-                    'type': 'GNSS Position message',
-                    'latitude': latitude,
-                    'longitude': longitude,
-                    'utc_time': utc_time,
-                    'raw_data': hex_message
-                }
-                return result
-            
             elif msg_type == '4':  # Beacon message
-                # Define field lengths for Type 4
+                print("Debug - Processing Beacon message")
                 field_lengths = [2, 2, 4, 4, 2, 4, 4, 2, 4, 4, 2]
                 
-                # Split message into parts
                 current_pos = 0
+                parts = []
                 for length in field_lengths:
                     if current_pos + length <= len(hex_message):
-                        parts.append(hex_message[current_pos:current_pos + length])
+                        part = hex_message[current_pos:current_pos + length]
+                        parts.append(part)
+                        print(f"Debug - Part {len(parts)}: {part} (length: {length})")
                         current_pos += length
                 
-                # Process beacon data
                 beacons = []
-                if len(parts) >= 5:  # First beacon
-                    major = int(parts[2], 16)
-                    minor = int(parts[3], 16)
-                    if not (major == 0 and minor == 0):  # Only add if not both zero
-                        beacons.append({
-                            'major': major,
-                            'minor': minor,
-                            'rssi': calculate_rssi(parts[4])
-                        })
-                
-                if len(parts) >= 8:  # Second beacon
-                    major = int(parts[5], 16)
-                    minor = int(parts[6], 16)
-                    if not (major == 0 and minor == 0):  # Only add if not both zero
-                        beacons.append({
-                            'major': major,
-                            'minor': minor,
-                            'rssi': calculate_rssi(parts[7])
-                        })
-                
-                # Get the best beacon (no need to sort by RSSI as we're ignoring zeros)
-                best_beacon = beacons[0] if beacons else None
-                
-                result = {
-                    'type': 'Beacon message',
-                    'beacon_count': len(beacons),  # Update count to reflect valid beacons
-                    'beacons': beacons,
-                    'best_beacon': best_beacon,
-                    'raw_data': hex_message
-                }
-                return result
+                try:
+                    if len(parts) >= 5:  # First beacon
+                        major = int(parts[2], 16)
+                        minor = int(parts[3], 16)
+                        rssi = calculate_rssi(parts[4])
+                        print(f"Debug - First beacon: Major={major}, Minor={minor}, RSSI={rssi}")
+                        if not (major == 0 and minor == 0):
+                            beacons.append({'major': major, 'minor': minor, 'rssi': rssi})
+                    
+                    if len(parts) >= 8:  # Second beacon
+                        major = int(parts[5], 16)
+                        minor = int(parts[6], 16)
+                        rssi = calculate_rssi(parts[7])
+                        print(f"Debug - Second beacon: Major={major}, Minor={minor}, RSSI={rssi}")
+                        if not (major == 0 and minor == 0):
+                            beacons.append({'major': major, 'minor': minor, 'rssi': rssi})
+                    
+                    result = {
+                        'type': 'Beacon message',
+                        'beacon_count': len(beacons),
+                        'beacons': beacons,
+                        'best_beacon': beacons[0] if beacons else None,
+                        'raw_data': hex_message
+                    }
+                    return result
+                except Exception as e:
+                    print(f"Error parsing beacon data: {str(e)}")
+                    print(f"Debug - Available parts: {parts}")
+                    raise
             
             elif msg_type == '5':  # Alarm message
+                print("Debug - Processing Alarm message")
                 # Define field lengths for Type 5
-                field_lengths = [2,      # Type Bit Field
-                               2,      # Alarm Bit Field
-                               2]      # Reserved
+                field_lengths = [2, 2, 2]  # Type, Alarm, Reserved
                 
-                # Split message into parts
                 current_pos = 0
+                parts = []
                 for length in field_lengths:
                     if current_pos + length <= len(hex_message):
-                        parts.append(hex_message[current_pos:current_pos + length])
+                        part = hex_message[current_pos:current_pos + length]
+                        parts.append(part)
+                        print(f"Debug - Part {len(parts)}: {part} (length: {length})")
                         current_pos += length
                 
-                # Decode alarm type
                 alarm_types = {
                     '01': 'Low battery alarm',
                     '02': 'Power off alarm',
@@ -304,6 +320,9 @@ def decode_hex_message(hex_message, firmware_type):
                 alarm_code = parts[1] if len(parts) > 1 else None
                 alarm_description = alarm_types.get(alarm_code, 'Unknown alarm type')
                 
+                print(f"Debug - Alarm code: {alarm_code}")
+                print(f"Debug - Alarm description: {alarm_description}")
+                
                 result = {
                     'type': 'Alarm message',
                     'alarm_type': alarm_code,
@@ -313,6 +332,7 @@ def decode_hex_message(hex_message, firmware_type):
                 return result
             
             else:
+                print(f"Debug - Unknown message type: {msg_type}")
                 return {
                     'type': 'Unknown message type',
                     'raw_data': hex_message
