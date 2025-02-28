@@ -108,8 +108,6 @@ def decode_hex_message(hex_message, firmware_type):
         print(f"\nDebug - Raw hex message: {hex_message}")
         print(f"Debug - Firmware type: {firmware_type}")
         
-        parts = []
-        
         if len(hex_message) >= 2:
             msg_type = hex_message[0]
             print(f"Debug - Message type detected: {msg_type}")
@@ -117,6 +115,7 @@ def decode_hex_message(hex_message, firmware_type):
             if msg_type == '2':  # Heartbeat message
                 print("Debug - Processing Heartbeat message")
                 print(f"Debug - Message length: {len(hex_message)}")
+                print(f"Debug - Using firmware type: {firmware_type}")
                 
                 # Define field lengths for Type 2
                 field_lengths = [2,  # Type Bit Field
@@ -135,6 +134,7 @@ def decode_hex_message(hex_message, firmware_type):
                 
                 # Split message into parts
                 current_pos = 0
+                parts = []
                 for length in field_lengths:
                     if current_pos + length <= len(hex_message):
                         part = hex_message[current_pos:current_pos + length]
@@ -149,18 +149,30 @@ def decode_hex_message(hex_message, firmware_type):
                     print(f"Debug - Raw voltage decimal: {raw_voltage}")
                     
                     # Calculate voltage based on firmware type
+                    # Convert firmware_type to string if it isn't already
+                    firmware_type = str(firmware_type)
+                    
                     if firmware_type == '1':
+                        # For firmware type 1: value * 0.1 (direct conversion)
                         battery_voltage = float(raw_voltage) * 0.1
-                    else:  # firmware_type == '2'
+                        print(f"Debug - Using firmware type 1 formula: {raw_voltage} * 0.1")
+                    elif firmware_type == '2':
+                        # For firmware type 2: (value * 0.01) + 1.5
                         battery_voltage = (raw_voltage * 0.01) + 1.5
+                        print(f"Debug - Using firmware type 2 formula: ({raw_voltage} * 0.01) + 1.5")
+                    else:
+                        print(f"Warning: Unknown firmware type: {firmware_type}, defaulting to type 1")
+                        battery_voltage = float(raw_voltage) * 0.1
                     
                     battery_percent = int(parts[3], 16) if len(parts) > 3 else None
                     
-                    print(f"Debug - Voltage calculation:")
-                    print(f"Debug - Firmware type: {firmware_type}")
-                    print(f"Debug - Formula: {raw_voltage} * {0.01 if firmware_type == '2' else 0.1}" + 
-                          f"{' + 1.5' if firmware_type == '2' else ''}")
+                    print("\nDebug - Final values:")
+                    print(f"Debug - Firmware type used: {firmware_type}")
+                    print(f"Debug - Raw voltage (hex): {parts[2]}")
+                    print(f"Debug - Raw voltage (decimal): {raw_voltage}")
+                    print(f"Debug - Voltage calculation method: {'value * 0.1' if firmware_type == '1' else '(value * 0.01) + 1.5'}")
                     print(f"Debug - Calculated voltage: {battery_voltage}V")
+                    print(f"Debug - Battery percent (hex): {parts[3]}")
                     print(f"Debug - Battery percent: {battery_percent}%")
                     
                     result = {
@@ -169,9 +181,10 @@ def decode_hex_message(hex_message, firmware_type):
                         'battery_percent': battery_percent,
                         'temperature': int(parts[6], 16) if len(parts) > 6 else None,
                         'movement_duration': int(parts[7], 16) * 5 if len(parts) > 7 else None,
-                        'raw_data': hex_message
+                        'raw_data': hex_message,
+                        'firmware_type_used': firmware_type  # Add this for debugging
                     }
-                    print(f"Debug - Final parsed result: {result}")
+                    print(f"\nDebug - Final parsed result: {result}")
                     return result
                     
                 except Exception as e:
@@ -630,7 +643,6 @@ def main():
     while True:
         connection = None
         try:
-            # Membuat koneksi langsung ke database
             connection = create_database_connection()
             
             if connection:
@@ -655,7 +667,6 @@ def main():
                         connection.close()
                         print("\nKoneksi database ditutup")
             
-            # Tunggu 10 detik sebelum mengecek data baru
             print(f"\nWaiting for 10 seconds before next check...")
             time.sleep(10)
             
