@@ -14,17 +14,17 @@ def create_database_connection():
     """
     Membuat koneksi langsung ke database lokal
     """
-    # Konfigurasi Database
-    db_config = {
-        'host': '127.0.0.1',           # Local database host
-        'port': 3306,                  # Default MySQL port
-        'db': 'lansitec_cat1',         # Nama database
-        'user': 'admin',               # Username database
-        'password': 'Wow0w0!2025'      # Password database
-    }
-
     try:
-        # Membuat koneksi database langsung
+        # Konfigurasi Database
+        db_config = {
+            'host': '127.0.0.1',           # Local database host
+            'port': 3306,                  # Default MySQL port
+            'db': 'lansitec_cat1',         # Nama database
+            'user': 'admin',               # Username database
+            'password': 'Wow0w0!2025'      # Password database
+        }
+
+        # Connect to MySQL directly
         connection = pymysql.connect(
             host=db_config['host'],
             port=db_config['port'],
@@ -32,7 +32,7 @@ def create_database_connection():
             password=db_config['password'],
             database=db_config['db']
         )
-
+        
         return connection
 
     except Exception as e:
@@ -48,13 +48,13 @@ def get_device_data(connection, filter_type=None, value=None):
     try:
         with connection.cursor(pymysql.cursors.DictCursor) as cursor:  # Menggunakan DictCursor agar hasil dalam bentuk dictionary
             if filter_type == 'imei':
-                query = "SELECT * FROM device WHERE imei = %s"
+                query = "SELECT imei, serial_number, firmware_type FROM device WHERE imei = %s"
                 cursor.execute(query, (value,))
             elif filter_type == 'serial_number':
-                query = "SELECT * FROM device WHERE serial_number = %s"
+                query = "SELECT imei, serial_number, firmware_type FROM device WHERE serial_number = %s"
                 cursor.execute(query, (value,))
             else:
-                query = "SELECT * FROM device"
+                query = "SELECT imei, serial_number, firmware_type FROM device"
                 cursor.execute(query)
             
             results = cursor.fetchall()
@@ -100,179 +100,218 @@ def calculate_rssi(hex_value):
     except:
         return None
 
-def decode_hex_message(hex_message):
+def decode_hex_message(hex_message, firmware_type):
     """
     Mendecode pesan hex dari content Antares
     """
-    parts = []
-    
-    # Check message type first
-    if len(hex_message) >= 2:
-        msg_type = hex_message[0]
+    try:
+        print(f"\nDebug - Raw hex message: {hex_message}")
+        print(f"Debug - Firmware type: {firmware_type}")
         
-        if msg_type == '1':  # Registration message
-            return {
-                'type': 'Registration message',
-                'raw_data': hex_message
-            }
-        elif msg_type == '2':  # Heartbeat message
-            # Define field lengths for Type 2
-            field_lengths = [2,  # Type Bit Field
-                           8,  # State Bit Field
-                           2,  # VOL Bit Field
-                           2,  # VOL Percent Bit Field
-                           2,  # BLE Receiving Count
-                           2,  # GNSS-on Count
-                           4,  # Temperature
-                           4,  # Movement Duration
-                           4,  # Reserved
-                           4,  # Reserved
-                           4,  # Message ID
-                           8   # Reserved
-                           ]
+        parts = []
+        
+        if len(hex_message) >= 2:
+            msg_type = hex_message[0]
+            print(f"Debug - Message type detected: {msg_type}")
             
-            # Split message into parts
-            current_pos = 0
-            for length in field_lengths:
-                if current_pos + length <= len(hex_message):
-                    parts.append(hex_message[current_pos:current_pos + length])
-                    current_pos += length
+            if msg_type == '2':  # Heartbeat message
+                print("Debug - Processing Heartbeat message")
+                print(f"Debug - Message length: {len(hex_message)}")
+                
+                # Define field lengths for Type 2
+                field_lengths = [2,  # Type Bit Field
+                               8,  # State Bit Field
+                               2,  # VOL Bit Field
+                               2,  # VOL Percent Bit Field
+                               2,  # BLE Receiving Count
+                               2,  # GNSS-on Count
+                               4,  # Temperature
+                               4,  # Movement Duration
+                               4,  # Reserved
+                               4,  # Reserved
+                               4,  # Message ID
+                               8   # Reserved
+                               ]
+                
+                # Split message into parts
+                current_pos = 0
+                for length in field_lengths:
+                    if current_pos + length <= len(hex_message):
+                        part = hex_message[current_pos:current_pos + length]
+                        parts.append(part)
+                        print(f"Debug - Part {len(parts)}: {part} (length: {length})")
+                        current_pos += length
+                
+                try:
+                    # Get raw voltage value
+                    raw_voltage = int(parts[2], 16) if len(parts) > 2 else 0
+                    print(f"Debug - Raw voltage hex: {parts[2]}")
+                    print(f"Debug - Raw voltage decimal: {raw_voltage}")
+                    
+                    # Calculate voltage based on firmware type
+                    if firmware_type == '1':
+                        battery_voltage = float(raw_voltage) * 0.1
+                    else:  # firmware_type == '2'
+                        battery_voltage = (raw_voltage * 0.01) + 1.5
+                    
+                    battery_percent = int(parts[3], 16) if len(parts) > 3 else None
+                    
+                    print(f"Debug - Voltage calculation:")
+                    print(f"Debug - Firmware type: {firmware_type}")
+                    print(f"Debug - Formula: {raw_voltage} * {0.01 if firmware_type == '2' else 0.1}" + 
+                          f"{' + 1.5' if firmware_type == '2' else ''}")
+                    print(f"Debug - Calculated voltage: {battery_voltage}V")
+                    print(f"Debug - Battery percent: {battery_percent}%")
+                    
+                    result = {
+                        'type': 'Heartbeat message',
+                        'battery_voltage': round(battery_voltage, 2),  # Round to 2 decimal places
+                        'battery_percent': battery_percent,
+                        'temperature': int(parts[6], 16) if len(parts) > 6 else None,
+                        'movement_duration': int(parts[7], 16) * 5 if len(parts) > 7 else None,
+                        'raw_data': hex_message
+                    }
+                    print(f"Debug - Final parsed result: {result}")
+                    return result
+                    
+                except Exception as e:
+                    print(f"Error parsing heartbeat data: {str(e)}")
+                    print(f"Debug - Available parts: {parts}")
+                    raise
+
+            elif msg_type == '1':  # Registration message
+                return {
+                    'type': 'Registration message',
+                    'raw_data': hex_message
+                }
             
-            # Decode parts
-            result = {
-                'type': 'Heartbeat message',
-                'battery_voltage': float(int(parts[2], 16)) * 0.1 if len(parts) > 2 else None,
-                'battery_percent': int(parts[3], 16) if len(parts) > 3 else None,
-                'temperature': int(parts[6][-2:], 16) if len(parts) > 6 else None,
-                'movement_duration': int(parts[7], 16) * 5 if len(parts) > 7 else None,
-                'raw_data': hex_message
-            }
-            return result
+            elif msg_type == '3':  # GNSS Position message
+                # Define field lengths for Type 3
+                field_lengths = [2,  # Type Bit Field
+                               8,  # Longitude
+                               8,  # Latitude
+                               8,  # UTC Time
+                               4,  # Reserved
+                               4,  # Reserved
+                               2]  # Reserved
+                
+                # Split message into parts
+                current_pos = 0
+                for length in field_lengths:
+                    if current_pos + length <= len(hex_message):
+                        parts.append(hex_message[current_pos:current_pos + length])
+                        current_pos += length
+                
+                # Decode IEEE 754 coordinates
+                try:
+                    latitude = struct.unpack('!f', bytes.fromhex(parts[2]))[0] if len(parts) > 2 else None
+                    longitude = struct.unpack('!f', bytes.fromhex(parts[1]))[0] if len(parts) > 1 else None
+                    timestamp = int(parts[3], 16) if len(parts) > 3 else None
+                    utc_time = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S UTC') if timestamp else None
+                except Exception as e:
+                    print(f"Error decoding coordinates: {str(e)}")
+                    latitude = longitude = utc_time = None
+                
+                result = {
+                    'type': 'GNSS Position message',
+                    'latitude': latitude,
+                    'longitude': longitude,
+                    'utc_time': utc_time,
+                    'raw_data': hex_message
+                }
+                return result
             
-        elif msg_type == '3':  # GNSS Position message
-            # Define field lengths for Type 3
-            field_lengths = [2,  # Type Bit Field
-                           8,  # Longitude
-                           8,  # Latitude
-                           8,  # UTC Time
-                           4,  # Reserved
-                           4,  # Reserved
-                           2]  # Reserved
+            elif msg_type == '4':  # Beacon message
+                # Define field lengths for Type 4
+                field_lengths = [2, 2, 4, 4, 2, 4, 4, 2, 4, 4, 2]
+                
+                # Split message into parts
+                current_pos = 0
+                for length in field_lengths:
+                    if current_pos + length <= len(hex_message):
+                        parts.append(hex_message[current_pos:current_pos + length])
+                        current_pos += length
+                
+                # Process beacon data
+                beacons = []
+                if len(parts) >= 5:  # First beacon
+                    major = int(parts[2], 16)
+                    minor = int(parts[3], 16)
+                    if not (major == 0 and minor == 0):  # Only add if not both zero
+                        beacons.append({
+                            'major': major,
+                            'minor': minor,
+                            'rssi': calculate_rssi(parts[4])
+                        })
+                
+                if len(parts) >= 8:  # Second beacon
+                    major = int(parts[5], 16)
+                    minor = int(parts[6], 16)
+                    if not (major == 0 and minor == 0):  # Only add if not both zero
+                        beacons.append({
+                            'major': major,
+                            'minor': minor,
+                            'rssi': calculate_rssi(parts[7])
+                        })
+                
+                # Get the best beacon (no need to sort by RSSI as we're ignoring zeros)
+                best_beacon = beacons[0] if beacons else None
+                
+                result = {
+                    'type': 'Beacon message',
+                    'beacon_count': len(beacons),  # Update count to reflect valid beacons
+                    'beacons': beacons,
+                    'best_beacon': best_beacon,
+                    'raw_data': hex_message
+                }
+                return result
             
-            # Split message into parts
-            current_pos = 0
-            for length in field_lengths:
-                if current_pos + length <= len(hex_message):
-                    parts.append(hex_message[current_pos:current_pos + length])
-                    current_pos += length
+            elif msg_type == '5':  # Alarm message
+                # Define field lengths for Type 5
+                field_lengths = [2,      # Type Bit Field
+                               2,      # Alarm Bit Field
+                               2]      # Reserved
+                
+                # Split message into parts
+                current_pos = 0
+                for length in field_lengths:
+                    if current_pos + length <= len(hex_message):
+                        parts.append(hex_message[current_pos:current_pos + length])
+                        current_pos += length
+                
+                # Decode alarm type
+                alarm_types = {
+                    '01': 'Low battery alarm',
+                    '02': 'Power off alarm',
+                    '03': 'Power on alarm',
+                    '04': 'Movement alarm',
+                    '05': 'Tamper detection alarm'
+                }
+                
+                alarm_code = parts[1] if len(parts) > 1 else None
+                alarm_description = alarm_types.get(alarm_code, 'Unknown alarm type')
+                
+                result = {
+                    'type': 'Alarm message',
+                    'alarm_type': alarm_code,
+                    'alarm_description': alarm_description,
+                    'raw_data': hex_message
+                }
+                return result
             
-            # Decode IEEE 754 coordinates
-            try:
-                latitude = struct.unpack('!f', bytes.fromhex(parts[2]))[0] if len(parts) > 2 else None
-                longitude = struct.unpack('!f', bytes.fromhex(parts[1]))[0] if len(parts) > 1 else None
-                timestamp = int(parts[3], 16) if len(parts) > 3 else None
-                utc_time = datetime.utcfromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S UTC') if timestamp else None
-            except Exception as e:
-                print(f"Error decoding coordinates: {str(e)}")
-                latitude = longitude = utc_time = None
-            
-            result = {
-                'type': 'GNSS Position message',
-                'latitude': latitude,
-                'longitude': longitude,
-                'utc_time': utc_time,
-                'raw_data': hex_message
-            }
-            return result
-            
-        elif msg_type == '4':  # Beacon message
-            # Define field lengths for Type 4
-            field_lengths = [2, 2, 4, 4, 2, 4, 4, 2, 4, 4, 2]
-            
-            # Split message into parts
-            current_pos = 0
-            for length in field_lengths:
-                if current_pos + length <= len(hex_message):
-                    parts.append(hex_message[current_pos:current_pos + length])
-                    current_pos += length
-            
-            # Process beacon data
-            beacons = []
-            if len(parts) >= 5:  # First beacon
-                major = int(parts[2], 16)
-                minor = int(parts[3], 16)
-                if not (major == 0 and minor == 0):  # Only add if not both zero
-                    beacons.append({
-                        'major': major,
-                        'minor': minor,
-                        'rssi': calculate_rssi(parts[4])
-                    })
-            
-            if len(parts) >= 8:  # Second beacon
-                major = int(parts[5], 16)
-                minor = int(parts[6], 16)
-                if not (major == 0 and minor == 0):  # Only add if not both zero
-                    beacons.append({
-                        'major': major,
-                        'minor': minor,
-                        'rssi': calculate_rssi(parts[7])
-                    })
-            
-            # Get the best beacon (no need to sort by RSSI as we're ignoring zeros)
-            best_beacon = beacons[0] if beacons else None
-            
-            result = {
-                'type': 'Beacon message',
-                'beacon_count': len(beacons),  # Update count to reflect valid beacons
-                'beacons': beacons,
-                'best_beacon': best_beacon,
-                'raw_data': hex_message
-            }
-            return result
-            
-        elif msg_type == '5':  # Alarm message
-            # Define field lengths for Type 5
-            field_lengths = [2,      # Type Bit Field
-                           2,      # Alarm Bit Field
-                           2]      # Reserved
-            
-            # Split message into parts
-            current_pos = 0
-            for length in field_lengths:
-                if current_pos + length <= len(hex_message):
-                    parts.append(hex_message[current_pos:current_pos + length])
-                    current_pos += length
-            
-            # Decode alarm type
-            alarm_types = {
-                '01': 'Low battery alarm',
-                '02': 'Power off alarm',
-                '03': 'Power on alarm',
-                '04': 'Movement alarm',
-                '05': 'Tamper detection alarm'
-            }
-            
-            alarm_code = parts[1] if len(parts) > 1 else None
-            alarm_description = alarm_types.get(alarm_code, 'Unknown alarm type')
-            
-            result = {
-                'type': 'Alarm message',
-                'alarm_type': alarm_code,
-                'alarm_description': alarm_description,
-                'raw_data': hex_message
-            }
-            return result
-            
-        else:
-            return {
-                'type': 'Unknown message type',
-                'raw_data': hex_message
-            }
+            else:
+                return {
+                    'type': 'Unknown message type',
+                    'raw_data': hex_message
+                }
     
-    return {
-        'type': 'Invalid message',
-        'raw_data': hex_message
-    }
+    except Exception as e:
+        print(f"Error in decode_hex_message: {str(e)}")
+        return {
+            'type': 'Invalid message',
+            'error': str(e),
+            'raw_data': hex_message
+        }
 
 def save_to_registration(connection, parsed_data, imei, created_time):
     """
@@ -377,8 +416,16 @@ def save_payload_to_db(connection, imei, content, created_time):
     Menyimpan data payload ke database dengan hasil parsing
     """
     try:
+        # Ambil firmware_type dari database
+        device_data = get_device_data(connection, filter_type='imei', value=imei)
+        if not device_data or 'firmware_type' not in device_data[0]:
+            print(f"Error: Tidak dapat menemukan firmware_type untuk IMEI {imei}")
+            return
+        
+        firmware_type = device_data[0]['firmware_type']
+        
         # Parse content terlebih dahulu
-        parsed_data = decode_hex_message(content)
+        parsed_data = decode_hex_message(content, firmware_type)
         
         # Tampilkan informasi parsing secara terstruktur
         print("\nHasil Parsing Data:")
@@ -393,8 +440,10 @@ def save_payload_to_db(connection, imei, content, created_time):
         if parsed_data['type'] == 'Heartbeat message':
             print(f"• Battery Voltage  : {parsed_data['battery_voltage']}V")
             print(f"• Battery Level   : {parsed_data['battery_percent']}%")
-            print(f"• Temperature     : {parsed_data['temperature']}°C")
-            print(f"• Movement Duration: {parsed_data['movement_duration']} seconds")
+            if 'temperature' in parsed_data:
+                print(f"• Temperature     : {parsed_data['temperature']}°C")
+            if 'movement_duration' in parsed_data:
+                print(f"• Movement Duration: {parsed_data['movement_duration']} seconds")
         
         elif parsed_data['type'] == 'GNSS Position message':
             print(f"• Latitude  : {parsed_data['latitude']}")
@@ -579,6 +628,7 @@ def main():
     print("Starting data collection service...")
     
     while True:
+        connection = None
         try:
             # Membuat koneksi langsung ke database
             connection = create_database_connection()
@@ -601,9 +651,9 @@ def main():
                     print(f"Error saat menjalankan query: {str(e)}")
 
                 finally:
-                    # Menutup koneksi
-                    connection.close()
-                    print("\nKoneksi ditutup")
+                    if connection:
+                        connection.close()
+                        print("\nKoneksi database ditutup")
             
             # Tunggu 10 detik sebelum mengecek data baru
             print(f"\nWaiting for 10 seconds before next check...")
@@ -614,6 +664,8 @@ def main():
             break
         except Exception as e:
             print(f"\nError dalam main loop: {str(e)}")
+            if connection:
+                connection.close()
             print("Mencoba kembali dalam 10 detik...")
             time.sleep(10)
 
